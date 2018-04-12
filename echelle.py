@@ -259,3 +259,10 @@ def runAll():
   for y in ys:
     plt.plot(x,y, color='y')
   plt.show()
+
+def readData():
+  filename = "sample_flat.fits"
+
+  from astropy.io import fits
+  data = fits.getdata(filename)
+  return data
