@@ -84,3 +84,70 @@ def parabolicHT(data, paramArrays,verbose=False):
         A[nearest_a,b_index,c_index] = A[nearest_a,b_index,c_index]+1
     
   return A
+
+def findThreePeaks(HT,cutoff_fraction=2.0, neighborhood_size = 40):
+  #local maximum filter
+  cutoff_max = np.max(HT)/cutoff_fraction
+
+
+  CHT = clean(HT,cutoff_max)
+  CHT_max = ndimage.maximum_filter(CHT, neighborhood_size)
+  maxima = (CHT == CHT_max)
+
+  #delete zeros
+  maxima[CHT_max == 0] = 0
+
+
+
+  labeled, numObjects = ndimage.label(maxima) #, structure = np.ones([3,3], bool))
+  slices = ndimage.find_objects(labeled)
+    
+  aaa,bbb,ccc = [], [], []
+  for da,db,dc in slices:
+      a_center = (da.start + da.stop -1)/2
+      aaa.append(a_center)
+
+      b_center = (db.start + db.stop -1)/2
+      bbb.append(b_center)
+
+      c_center = (dc.start + dc.stop - 1)/2    
+      ccc.append(c_center)
+
+  return aaa, bbb, ccc
+
+def findHoughPeaks(HT, cutoff_fraction=2.0, neighborhood_size = 40):
+  #local maximum filter
+  cutoff_max = np.max(HT)/cutoff_fraction
+
+
+  CHT = clean(HT,cutoff_max)
+  CHT_max = ndimage.maximum_filter(CHT, neighborhood_size)
+  maxima = (CHT == CHT_max)
+
+  #delete zeros
+  maxima[CHT_max == 0] = 0
+
+
+
+  labeled, numObjects = ndimage.label(maxima) #, structure = np.ones([3,3], bool))
+  slices = ndimage.find_objects(labeled)
+  a,k = [], []
+  for dk, da in slices:
+    a_center = (da.start + da.stop -1)/2
+    a.append(a_center)
+
+    k_center = (dk.start + dk.stop - 1)/2    
+    k.append(k_center)
+
+
+  return a, k, maxima
+
+
+#sets everything below t to zero in arr
+def clean(arr, t):
+  cp = []
+  cp.extend(arr)
+  cp = np.array(cp)
+
+  cp[cp<t] = 0
+  return cp

@@ -1,7 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
-import scipy.ndimage.filters as filters
 import scipy.ndimage as ndimage
 import scipy.signal as signal
 
@@ -22,7 +21,12 @@ import hough
 #   optional:
 #     medianFilterShape: extent of median filter to be applied in preprocessing
 #                        (2,1) becomes a window of shape (5,3)
-def extractOrders(externalData, medianFilterShape=(2,1), verbose=True):
+def extractOrders(externalData, parameter_arrays, 
+                  medianFilterShape=(2,1), verbose=True,
+                  spacing = 10, sigma = 3, 
+                  min_peak_size = 1, max_peak_size=50,
+                  include_border=False,
+                  cutoff_fraction=2.0, neighborhood_size=40):
   #Check externalData has right shape:
   if(len(np.shape(externalData)) == 2):
     pass
@@ -43,51 +47,50 @@ def extractOrders(externalData, medianFilterShape=(2,1), verbose=True):
   # 1) apply median filter 
 
   windowShape = (medianFilterShape[0]*2+1, medianFilterShape[1]*2+1)
-  data = filters.median_filter(data, size=windowShape)
+  data = ndimage.median_filter(data, size=windowShape)
 
 
   if verbose:
     print("Finding Peaks")
   #find peaks column wise
-  peaks = get1Dpeaks(data)
+  peaks,bounds = get1Dpeaks(data, spacing=spacing, sigma=sigma, min_peak_size=min_peak_size, max_peak_size=max_peak_size, include_border=include_border)
 
   # Hough Transform:
   # y = ax**2 + bx + c
 
-  aMin = -2e-5
-  aMax = 2e-4
-  aLen = 60
-  aList = np.linspace(aMin, aMax, aLen)
-
-  bMin = 0.0
-  bMax = 0.2
-  bLen = 60
-  bList = np.linspace(bMin, bMax, bLen)
-
-  cMin = -10
-  cMax = np.shape(data)[0]
-  cList = np.arange(cMin,cMax+1,1)
-
 
   if verbose:
-    print("Performing Hough Transform")
-  HT = hough.parabolicHT(peaks,(aList,bList,cList),verbose=True)
+    print("Performing Hough Transform on above values")
+  above_peaks = (bounds[0], peaks[1])
+  above_HT = hough.parabolicHT(above_peaks, parameter_arrays,verbose=verbose)
+
+  if verbose:
+    print("Performing Hough Transform on below values")
+
+  below_peaks = (bounds[1], peaks[1])
+  below_HT = hough.parabolicHT(below_peaks, parameter_arrays,verbose=verbose)
 
   if verbose:
     print("Seaching for Peaks")
-  found_as, found_bs, found_cs, ht_maxima, ht_maxFilt = findThreePeaks(HT)
+  above_coordinates = hough.findThreePeaks(above_HT, cutoff_fraction=cutoff_fraction, neighborhood_size = neighborhood_size)
+
+  below_coordinates = hough.findThreePeaks(below_HT, cutoff_fraction=cutoff_fraction, neighborhood_size = neighborhood_size)
 
 
   if verbose:
     print("Plotting")
-  x,ys = genThreeParabola(found_as,found_bs,found_cs,aList,bList,cList,data)
+  above_x,above_ys = genThreeParabola(above_coordinates, parameter_arrays, data)
 
-  plt.imshow(data)
-  plt.scatter(peaks[1],peaks[0])
+  below_x,below_ys = genThreeParabola(below_coordinates, parameter_arrays, data)
 
-  for y in ys:
-    plt.plot(x,y,color='k')
-  plt.show()
+  return above_x,(above_ys,below_ys)
+
+  # plt.imshow(data,origin='lower')
+  # plt.scatter(peaks[1],peaks[0])
+
+  # for y in ys:
+  #   plt.plot(x,y,color='k')
+  # plt.show()
 
   # return peaks
 
@@ -109,6 +112,9 @@ def get1Dpeaks(data,
 
   rows = []
   cols = []
+  rows_above = []
+  rows_below = []
+  
   tData = np.transpose(data)
   peak_size_array = np.arange(min_peak_size,max_peak_size)
 
@@ -117,91 +123,43 @@ def get1Dpeaks(data,
       if (col == 0 or col == NCols):
         continue
     dSlice = tData[col]
-    filtered = filters.gaussian_filter(dSlice,sigma)
+    filtered = ndimage.gaussian_filter(dSlice,sigma)
     peak_rows = signal.find_peaks_cwt(filtered, peak_size_array)
     
+
     for row in peak_rows:
       if not include_border:
         if row == 0 or row == NRows:
           continue
+
+
+      hm = filtered[row]/2.0
+
+      nearest_below = row
+      for i in np.arange(row,-1,-1):
+        if (filtered[i] <= hm):
+          nearest_below = i
+          break
+
+
+      for i in np.arange(row, len(filtered)):
+        if (filtered[i] <= hm):
+          nearest_above = i 
+          break
+
+      # this_width = np.abs(nearest_above - nearest_below)
+
+      rows_above.append(nearest_above)
+      rows_below.append(nearest_below)
       rows.append(row)
       cols.append(col)
 
-  return np.array(rows), np.array(cols)
 
-
-
-def findThreePeaks(HT):
-  #local maximum filter
-  nieghborhood_size = 40
-  half_max = np.max(HT)/2.0
-
-
-  CHT = clean(HT,half_max)
-  CHT_max = filters.maximum_filter(CHT, nieghborhood_size)
-  maxima = (CHT == CHT_max)
-
-  #delete zeros
-  maxima[CHT_max == 0] = 0
-
-
-
-  labeled, numObjects = ndimage.label(maxima) #, structure = np.ones([3,3], bool))
-  slices = ndimage.find_objects(labeled)
-    
-  aaa,bbb,ccc = [], [], []
-  for da,db,dc in slices:
-      a_center = (da.start + da.stop -1)/2
-      aaa.append(a_center)
-
-      b_center = (db.start + db.stop -1)/2
-      bbb.append(b_center)
-
-      c_center = (dc.start + dc.stop - 1)/2    
-      ccc.append(c_center)
-
-  return aaa, bbb, ccc, maxima, CHT_max
-
-#sets everything below t to zero in arr
-def clean(arr, t):
-  cp = []
-  cp.extend(arr)
-  cp = np.array(cp)
-
-  cp[cp<t] = 0
-  return cp
+  return (np.array(rows), np.array(cols)), (np.array(rows_above), np.array(rows_below))
 
 # TODO 
 # combine neighbors
 # scipy.spatial.cKDTree
-
-def findHoughPeaks(HT):
-  #local maximum filter
-  nieghborhood_size = 40
-  half_max = np.max(HT)/2.0
-
-
-  CHT = clean(HT,half_max)
-  CHT_max = filters.maximum_filter(CHT, nieghborhood_size)
-  maxima = (CHT == CHT_max)
-
-  #delete zeros
-  maxima[CHT_max == 0] = 0
-
-
-
-  labeled, numObjects = ndimage.label(maxima) #, structure = np.ones([3,3], bool))
-  slices = ndimage.find_objects(labeled)
-  a,k = [], []
-  for dk, da in slices:
-    a_center = (da.start + da.stop -1)/2
-    a.append(a_center)
-
-    k_center = (dk.start + dk.stop - 1)/2    
-    k.append(k_center)
-
-
-  return a, k, maxima
 
 def genParabolas(a_inds,k_inds, aas, ks, data,pow=2): 
 
@@ -224,7 +182,9 @@ def genParabolas(a_inds,k_inds, aas, ks, data,pow=2):
   ys = np.array(ys)
   return x,ys
 
-def genThreeParabola(a_inds,b_inds,c_inds,aas,bs,cs,data):
+def genThreeParabola(coordinates,coord_lists,data):
+  a_inds, b_inds, c_inds = coordinates
+  aas, bs, cs = coord_lists
   NRows, NCols = np.shape(data)
   x = np.arange(0,NCols,0.1)
   ys = []
@@ -239,11 +199,11 @@ def genThreeParabola(a_inds,b_inds,c_inds,aas,bs,cs,data):
     c = cs[c_ind]
     
     y = a*x**2 + b*x + c
-    # y[np.extract(y,y > NRows)] = None
+    y[y >= NRows] = None
+    y[y < 0]      = None
     ys.append(y)
   ys = np.array(ys)
   return x,ys
-
 
 def runAll():
   import flatAngles
